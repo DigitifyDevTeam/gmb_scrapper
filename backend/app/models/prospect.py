@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
-from app.models.enums import WebsiteReason
+from app.models.enums import WebsiteReason, enum_member_values
 
 
 class Prospect(Base):
@@ -52,7 +52,12 @@ class Prospect(Base):
     maps_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     has_website: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     website_reason: Mapped[WebsiteReason] = mapped_column(
-        Enum(WebsiteReason, name="website_reason", native_enum=False),
+        Enum(
+            WebsiteReason,
+            name="website_reason",
+            native_enum=False,
+            values_callable=enum_member_values,
+        ),
         default=WebsiteReason.NO_URL,
         nullable=False,
     )

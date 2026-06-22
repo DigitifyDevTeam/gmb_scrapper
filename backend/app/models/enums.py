@@ -1,6 +1,10 @@
 import enum
 
 
+def enum_member_values(enum_cls: type[enum.Enum]) -> list[str]:
+    return [member.value for member in enum_cls]
+
+
 class SearchStatus(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"

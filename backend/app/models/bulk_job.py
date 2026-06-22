@@ -4,7 +4,7 @@ from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Integer, JSON, Strin
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
-from app.models.enums import SearchStatus
+from app.models.enums import SearchStatus, enum_member_values
 
 
 class BulkJob(Base):
@@ -25,7 +25,12 @@ class BulkJob(Base):
     current_city: Mapped[str | None] = mapped_column(String(150), nullable=True)
     current_category: Mapped[str | None] = mapped_column(String(150), nullable=True)
     status: Mapped[SearchStatus] = mapped_column(
-        Enum(SearchStatus, name="search_status", native_enum=False),
+        Enum(
+            SearchStatus,
+            name="search_status",
+            native_enum=False,
+            values_callable=enum_member_values,
+        ),
         nullable=False,
         default=SearchStatus.PENDING,
     )
