@@ -12,12 +12,17 @@ services:
       - "3307:3306"
     volumes:
       - leadforge_mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uleadforge", "-pleadforge"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 90s
     networks:
       - leadforge
 
@@ -58,7 +63,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-      start_period: 30s
+      start_period: 120s
     networks:
       - leadforge
 
