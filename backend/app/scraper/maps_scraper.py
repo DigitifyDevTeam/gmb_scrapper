@@ -12,7 +12,8 @@ from app.scraper.playwright_manager import PlaywrightManager
 from app.scraper.playwright_runner import run_playwright_task
 from app.scraper.rate_limit import scraper_action_delay, scraper_page_settle_delay
 from app.scraper.scroll_engine import ScrollEngine
-from app.utils.url import normalize_maps_url
+from app.scraper.testimonial import TestimonialFetchTarget
+from app.utils.url import resolve_maps_navigation_url
 from app.workers.bulk_cancel import is_bulk_cancel_requested
 
 logger = logging.getLogger(__name__)
@@ -101,35 +102,57 @@ class MapsScraper:
             bulk_job_id=bulk_job_id,
         )
 
-    async def scrape_testimonials(self, maps_urls: list[str], country: str) -> dict[str, list[dict]]:
-        unique_urls = []
-        seen: set[str] = set()
-        for url in maps_urls:
-            normalized = normalize_maps_url(url)
-            if not normalized or normalized in seen:
+    async def scrape_testimonials(
+        self,
+        targets: list[TestimonialFetchTarget],
+        country: str,
+    ) -> dict[str, list[dict]]:
+        unique_targets: list[TestimonialFetchTarget] = []
+        seen_keys: set[str] = set()
+        for target in targets:
+            if target.place_key in seen_keys:
                 continue
-            seen.add(normalized)
-            unique_urls.append(normalized)
+            seen_keys.add(target.place_key)
+            unique_targets.append(target)
 
-        if not unique_urls:
+        if not unique_targets:
             return {}
 
         locale = self._locale_for_country(country)
-        logger.info("Fetching testimonials for %s leads", len(unique_urls))
+        logger.info("Fetching testimonials for %s leads", len(unique_targets))
 
         async def fetch_testimonials() -> dict[str, list[dict]]:
             results: dict[str, list[dict]] = {}
             async with self.playwright_manager.session(locale=locale) as (_, _, page):
-                for maps_url in unique_urls:
+                for target in unique_targets:
                     try:
-                        await page.goto(maps_url, wait_until="domcontentloaded", timeout=60000)
+                        await page.goto(
+                            target.navigation_url,
+                            wait_until="domcontentloaded",
+                            timeout=60000,
+                        )
                         await scraper_page_settle_delay(self.settings)
+                        await prepare_maps_search_page(page)
                         await assert_maps_page_accessible(page)
-                        testimonials = await self.extraction_engine.extract_testimonials(page)
-                        results[maps_url] = [item.to_dict() for item in testimonials]
+                        if not await wait_for_results_feed(page):
+                            logger.warning(
+                                "Maps place did not load for testimonials: %s",
+                                target.business_name,
+                            )
+                            results[target.place_key] = []
+                            continue
+                        testimonials = await self.extraction_engine.extract_testimonials(
+                            page,
+                            expected_business_name=target.business_name,
+                        )
+                        results[target.place_key] = [item.to_dict() for item in testimonials]
                     except Exception as exc:
-                        logger.warning("Failed to fetch testimonials for %s: %s", maps_url, exc)
-                        results[maps_url] = []
+                        logger.warning(
+                            "Failed to fetch testimonials for %s: %s",
+                            target.business_name,
+                            exc,
+                        )
+                        results[target.place_key] = []
 
                     await scraper_action_delay(self.settings)
             return results

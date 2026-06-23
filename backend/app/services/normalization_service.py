@@ -5,7 +5,7 @@ from app.scraper.business_parser import RawBusiness
 from app.utils.address import normalize_address
 from app.utils.phone import normalize_phone
 from app.utils.prospect_identity import build_prospect_dedupe_key
-from app.utils.url import normalize_maps_url, parse_website_href
+from app.utils.url import normalize_maps_url, parse_website_href, resolve_maps_navigation_url
 
 
 @dataclass
@@ -36,7 +36,14 @@ class NormalizationService:
 
             address = normalize_address(business.address)
             phone = normalize_phone(business.phone, country)
-            maps_url = normalize_maps_url(business.maps_url)
+            maps_source_url = business.maps_url
+            maps_url = resolve_maps_navigation_url(
+                maps_url=maps_source_url,
+                business_name=name,
+                address=address,
+                city=None,
+                country=country,
+            ) or normalize_maps_url(maps_source_url)
             key, _ = build_prospect_dedupe_key(
                 business_name=name,
                 address=address,

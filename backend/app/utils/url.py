@@ -145,3 +145,32 @@ def normalize_maps_url(url: str | None) -> str | None:
 
     normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
     return normalized or source_url
+
+
+def resolve_maps_navigation_url(
+    *,
+    maps_url: str | None,
+    maps_place_id: str | None = None,
+    business_name: str | None = None,
+    address: str | None = None,
+    city: str | None = None,
+    country: str | None = None,
+) -> str | None:
+    """Prefer a direct /maps/place/ link so reviews open on the correct business."""
+    source = pick_best_maps_source_url(maps_url)
+    if source and "/maps/place/" in source:
+        return source.split("?")[0]
+
+    place_id = maps_place_id or extract_maps_place_id(source or maps_url or "")
+    if place_id:
+        return build_google_maps_profile_url(
+            business_name=business_name or "",
+            address=address,
+            city=city,
+            country=country,
+            maps_place_id=place_id,
+            maps_url=source or maps_url,
+        )
+
+    normalized = normalize_maps_url(maps_url)
+    return normalized or source or maps_url

@@ -2,7 +2,7 @@ from app.models.prospect import Prospect
 from app.scraper.website_detector import DetectionResult
 from app.services.normalization_service import NormalizedBusiness
 from app.utils.prospect_identity import build_google_maps_profile_url, build_prospect_dedupe_key
-from app.utils.url import normalize_url, parse_website_href
+from app.utils.url import normalize_url, parse_website_href, resolve_maps_navigation_url
 
 
 def build_prospect_from_scrape(
@@ -22,7 +22,14 @@ def build_prospect_from_scrape(
         maps_url=business.maps_url,
         country=country,
     )
-    maps_url = build_google_maps_profile_url(
+    maps_url = resolve_maps_navigation_url(
+        maps_url=business.maps_url,
+        maps_place_id=maps_place_id,
+        business_name=business.business_name,
+        address=business.address,
+        city=city,
+        country=country,
+    ) or build_google_maps_profile_url(
         business_name=business.business_name,
         address=business.address,
         city=city,

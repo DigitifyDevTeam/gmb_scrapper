@@ -9,7 +9,11 @@ from app.scraper.exceptions import BulkJobCancelledError
 from app.scraper.maps_ui import FEED_PLACE_CARD_SELECTOR, count_place_cards, is_single_place_url
 from app.scraper.rate_limit import scraper_action_delay
 from app.workers.bulk_cancel import is_bulk_cancel_requested
-from app.scraper.testimonial import Testimonial, parse_rating_from_aria
+from app.scraper.testimonial import (
+    Testimonial,
+    business_names_match,
+    parse_rating_from_aria,
+)
 from app.utils.phone import extract_phone_from_data_item_id
 from app.utils.prospect_identity import pick_best_maps_source_url
 from app.utils.url import parse_website_href
@@ -411,11 +415,33 @@ class ExtractionEngine:
 
         return None
 
-    async def extract_testimonials(self, page: Page) -> list[Testimonial]:
+    async def extract_testimonials(
+        self,
+        page: Page,
+        *,
+        expected_business_name: str | None = None,
+    ) -> list[Testimonial]:
+        await self._wait_for_place_title(page)
+        if expected_business_name and not await self._place_matches_name(page, expected_business_name):
+            actual = await self._first_text(page, ["h1.DUwDvf", "h1"]) or ""
+            logger.warning(
+                "Skipping reviews — place title %r does not match expected %r",
+                actual,
+                expected_business_name,
+            )
+            return []
+
         await self._open_reviews_panel(page)
         await self._scroll_reviews_panel(page)
 
-        review_items = page.locator("div[data-review-id]")
+        main_panel = page.locator(PLACE_PANEL_SELECTOR)
+        review_items = main_panel.locator("div[data-review-id]")
+        try:
+            await review_items.first.wait_for(state="attached", timeout=8000)
+        except Exception:
+            logger.warning("No review items found for %s", expected_business_name or page.url)
+            return []
+
         count = min(
             await review_items.count(),
             self.settings.scraper_max_testimonials_per_business,
@@ -440,6 +466,7 @@ class ExtractionEngine:
         return testimonials
 
     async def _open_reviews_panel(self, page: Page) -> None:
+        main_panel = page.locator(PLACE_PANEL_SELECTOR)
         tab_selectors = [
             'button[role="tab"][aria-label*="Avis"]',
             'button[role="tab"][aria-label*="Reviews"]',
@@ -450,26 +477,40 @@ class ExtractionEngine:
             'button[jsaction*="reviews"]',
         ]
         for selector in tab_selectors:
-            button = page.locator(selector).first
-            if await button.count() > 0:
-                await button.click()
-                await page.wait_for_timeout(1500)
-                return
+            button = main_panel.locator(selector).first
+            if await button.count() == 0:
+                continue
+            await button.click()
+            await page.wait_for_timeout(1500)
+            return
 
     async def _scroll_reviews_panel(self, page: Page) -> None:
+        main_panel = page.locator(PLACE_PANEL_SELECTOR)
         panel_selectors = [
-            'div[role="main"] div.m6QErb.DxyBCb',
-            'div[role="main"] div.m6QErb',
+            'div.m6QErb.DxyBCb',
+            'div.m6QErb',
             'div.section-scrollbox',
         ]
         for selector in panel_selectors:
-            panel = page.locator(selector).last
+            panel = main_panel.locator(selector).last
             if await panel.count() == 0:
                 continue
             for _ in range(self.settings.scraper_testimonial_scroll_rounds):
                 await panel.evaluate("element => { element.scrollTop = element.scrollHeight; }")
                 await page.wait_for_timeout(700)
             return
+
+    async def _wait_for_place_title(self, page: Page) -> None:
+        try:
+            await page.locator("h1.DUwDvf, h1").first.wait_for(state="visible", timeout=8000)
+        except Exception:
+            pass
+
+    async def _place_matches_name(self, page: Page, expected_name: str) -> bool:
+        actual = await self._first_text(page, ["h1.DUwDvf", "h1"])
+        if not actual:
+            return False
+        return business_names_match(expected_name, actual)
 
     async def _parse_review_item(self, item: Locator) -> Testimonial | None:
         text = await self._first_locator_text(

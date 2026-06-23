@@ -13,7 +13,9 @@ from app.scraper.maps_scraper import MapsScraper
 from app.services.normalization_service import NormalizationService
 from app.services.prospect_record_service import build_prospect_from_scrape
 from app.services.website_detection_service import WebsiteDetectionService
+from app.scraper.testimonial import TestimonialFetchTarget, build_testimonial_place_key
 from app.utils.prospect_identity import build_prospect_dedupe_key
+from app.utils.url import resolve_maps_navigation_url
 from app.workers.bulk_cancel import is_bulk_cancel_requested
 from app.workers.job_runner import job_runner
 from app.workers.scrape_result import ScrapeRunResult
@@ -55,6 +57,9 @@ async def execute_search_scrape(
     prospects_to_save: list[Prospect] = []
     skipped_duplicates = 0
     seen_dedupe_keys: set[str] = set()
+    testimonial_targets: list[TestimonialFetchTarget] = []
+    prospect_place_keys: dict[str, str] = {}
+
     for business, detection in enriched:
         if bulk_job_id and is_bulk_cancel_requested(bulk_job_id):
             raise BulkJobCancelledError(bulk_job_id)
@@ -92,16 +97,40 @@ async def execute_search_scrape(
         )
         prospects_to_save.append(prospect)
 
-    lead_maps_urls = [
-        prospect.maps_url
-        for prospect in prospects_to_save
-        if not prospect.has_website and prospect.maps_url
-    ]
-    if lead_maps_urls:
-        testimonials_by_url = await scraper.scrape_testimonials(lead_maps_urls, search.country)
+        if not detection.has_website:
+            place_key = build_testimonial_place_key(
+                maps_place_id=prospect.maps_place_id,
+                maps_url=business.maps_url or prospect.maps_url,
+            )
+            navigation_url = resolve_maps_navigation_url(
+                maps_url=business.maps_url or prospect.maps_url,
+                maps_place_id=prospect.maps_place_id,
+                business_name=business.business_name,
+                address=business.address,
+                city=search.city,
+                country=search.country,
+            )
+            if place_key and navigation_url:
+                prospect_place_keys[prospect.dedupe_key] = place_key
+                testimonial_targets.append(
+                    TestimonialFetchTarget(
+                        place_key=place_key,
+                        navigation_url=navigation_url,
+                        business_name=business.business_name,
+                    )
+                )
+
+    if testimonial_targets:
+        testimonials_by_place = await scraper.scrape_testimonials(
+            testimonial_targets,
+            search.country,
+        )
         for prospect in prospects_to_save:
-            if not prospect.has_website and prospect.maps_url:
-                prospect.testimonials = testimonials_by_url.get(prospect.maps_url) or None
+            if prospect.has_website:
+                continue
+            place_key = prospect_place_keys.get(prospect.dedupe_key)
+            if place_key:
+                prospect.testimonials = testimonials_by_place.get(place_key) or None
 
     if prospects_to_save:
         prospects_to_save, db_skipped = await prospect_repo.create_many_deduped(prospects_to_save)
