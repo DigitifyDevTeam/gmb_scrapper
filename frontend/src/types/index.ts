@@ -102,6 +102,8 @@ export interface BulkScrapingStatusResponse {
   completed_queries: number
   prospects_found: number
   prospects_saved: number
+  prospects_saved_with_website: number
+  prospects_saved_total: number
   prospects_skipped_duplicates: number
   current_city: string | null
   current_category: string | null

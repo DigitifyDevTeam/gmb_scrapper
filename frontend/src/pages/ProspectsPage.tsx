@@ -162,7 +162,7 @@ function ProspectCard({ prospect }: { prospect: Prospect }) {
 export function ProspectsPage() {
   const [city, setCity] = useState('')
   const [category, setCategory] = useState('')
-  const [websiteStatus, setWebsiteStatus] = useState('without')
+  const [websiteStatus, setWebsiteStatus] = useState('')
   const [websiteReason, setWebsiteReason] = useState('')
   const [page, setPage] = useState(1)
 
@@ -172,7 +172,7 @@ export function ProspectsPage() {
   const reasonFilter = websiteReason ? (websiteReason as WebsiteReason) : undefined
 
   const hasActiveFilters = Boolean(
-    city.trim() || category.trim() || websiteReason || (websiteStatus && websiteStatus !== 'without'),
+    city.trim() || category.trim() || websiteReason || websiteStatus,
   )
 
   const { data, isLoading, isError } = useProspects({
@@ -187,7 +187,7 @@ export function ProspectsPage() {
   function clearFilters() {
     setCity('')
     setCategory('')
-    setWebsiteStatus('without')
+    setWebsiteStatus('')
     setWebsiteReason('')
     setPage(1)
   }

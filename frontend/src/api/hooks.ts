@@ -47,8 +47,14 @@ export function useScrapingStatus(jobId: string | null, enabled: boolean) {
 }
 
 export function useStartBulkScraping() {
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (payload: BulkScrapingStartRequest) => scrapingApi.bulkStart(payload),
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.bulkScrapingStatus(data.job_id), data)
+      queryClient.setQueryData(queryKeys.bulkScrapingActive, data)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bulkScrapingActive })
+    },
   })
 }
 
@@ -91,6 +97,8 @@ export function useResumeBulkScraping() {
     mutationFn: (jobId: string) => scrapingApi.bulkResume(jobId),
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.bulkScrapingStatus(data.job_id), data)
+      queryClient.setQueryData(queryKeys.bulkScrapingActive, data)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bulkScrapingActive })
     },
   })
 }
@@ -105,6 +113,8 @@ export function useStopBulkScraping() {
         queryClient.setQueryData(queryKeys.bulkScrapingActive, null)
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.bulkScrapingActive })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.prospectStats })
+      void queryClient.invalidateQueries({ queryKey: ['prospects'] })
     },
   })
 }

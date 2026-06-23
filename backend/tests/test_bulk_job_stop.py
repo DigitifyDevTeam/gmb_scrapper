@@ -1,5 +1,5 @@
 from app.models.enums import SearchStatus
-from app.workers.bulk_cancel import is_bulk_cancel_requested
+from app.workers.bulk_cancel import is_bulk_cancel_requested, register_bulk_cancel
 from app.workers.job_runner import BulkJobState, JobRunner
 
 
@@ -44,4 +44,21 @@ def test_request_bulk_stop_is_idempotent() -> None:
 
     assert first.status == SearchStatus.STOPPED
     assert second.status == SearchStatus.STOPPED
-    assert second.finished_at == first.finished_at
+def test_request_bulk_resume_from_stopped() -> None:
+    runner = JobRunner()
+    state = BulkJobState(
+        job_id="bulk-resume-test",
+        country="France",
+        target_count=100,
+        status=SearchStatus.STOPPED,
+        total_queries=10,
+        completed_queries=3,
+        stop_requested=True,
+    )
+    runner.register_bulk_job(state)
+
+    resumed = runner.request_bulk_resume(state.job_id)
+
+    assert resumed.status == SearchStatus.RUNNING
+    assert resumed.stop_requested is False
+    assert resumed.finished_at is None

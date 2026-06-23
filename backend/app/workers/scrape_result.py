@@ -6,5 +6,5 @@ class ScrapeRunResult:
     found: int
     saved: int
     skipped_duplicates: int
-    skipped_has_website: int = 0
+    saved_with_website: int = 0
     saved_leads: int = 0

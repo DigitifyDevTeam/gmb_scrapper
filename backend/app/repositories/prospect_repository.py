@@ -138,8 +138,9 @@ class ProspectRepository(BaseRepository[Prospect]):
 
         return False
 
-    async def create_many_deduped(self, entities: list[Prospect]) -> list[Prospect]:
+    async def create_many_deduped(self, entities: list[Prospect]) -> tuple[list[Prospect], int]:
         saved: list[Prospect] = []
+        skipped_duplicates = 0
         for entity in entities:
             try:
                 async with self.session.begin_nested():
@@ -148,5 +149,6 @@ class ProspectRepository(BaseRepository[Prospect]):
                     await self.session.refresh(entity)
                     saved.append(entity)
             except IntegrityError:
+                skipped_duplicates += 1
                 continue
-        return saved
+        return saved, skipped_duplicates

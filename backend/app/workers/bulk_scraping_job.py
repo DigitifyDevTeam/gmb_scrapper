@@ -168,6 +168,21 @@ async def run_bulk_scraping_job(
                 )
                 await session.commit()
         except BulkJobCancelledError:
+            bulk_state = job_runner.get_bulk_job(bulk_job_id)
+            if bulk_state is None or not bulk_state.stop_requested:
+                logger.warning(
+                    "Bulk %s query %s/%s hit cancel without stop request — skipping query",
+                    bulk_job_id,
+                    index,
+                    len(queries),
+                )
+                async with AsyncSessionLocal() as session:
+                    search_repo = SearchRepository(session)
+                    await search_repo.update_status(search_id, SearchStatus.FAILED)
+                    await session.commit()
+                current_search_id = None
+                continue
+
             logger.info(
                 "Bulk %s query %s/%s cancelled for %s / %s",
                 bulk_job_id,
@@ -183,7 +198,12 @@ async def run_bulk_scraping_job(
             current_search_id = None
             break
         except asyncio.CancelledError:
-            if current_search_id is not None:
+            bulk_state = job_runner.get_bulk_job(bulk_job_id)
+            if (
+                bulk_state is not None
+                and bulk_state.stop_requested
+                and current_search_id is not None
+            ):
                 async with AsyncSessionLocal() as session:
                     search_repo = SearchRepository(session)
                     await search_repo.update_status(current_search_id, SearchStatus.STOPPED)
@@ -259,6 +279,8 @@ async def run_bulk_scraping_job(
             bulk_job_id,
             found_delta=result.found,
             saved_delta=result.saved_leads,
+            saved_with_website_delta=result.saved_with_website,
+            saved_total_delta=result.saved,
             skipped_delta=result.skipped_duplicates,
             completed_queries=index,
         )

@@ -125,6 +125,12 @@ class BulkScrapingService:
                 detail=f"Bulk job {job_id} not found",
             )
 
+        if db_job.status == SearchStatus.STOPPED and db_job.completed_queries >= db_job.total_queries:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bulk job {job_id} is already finished",
+            )
+
         memory_job = self.runner.get_bulk_job(job_id)
         if memory_job is None:
             memory_job = bulk_job_to_state(db_job)
@@ -148,7 +154,7 @@ class BulkScrapingService:
                 ),
             )
 
-        await self.bulk_job_repo.sync_control_flags(job_id, state)
+        await self.bulk_job_repo.upsert_from_state(state)
         await self.session.commit()
         schedule_sync_bulk_job(state)
         return self._to_status_response(state)
@@ -190,6 +196,16 @@ class BulkScrapingService:
         return job_wrapper
 
     def _to_status_response(self, job: BulkJobState | BulkJob) -> BulkScrapingStatusResponse:
+        saved_leads = job.prospects_saved
+        saved_with_website = job.prospects_saved_with_website
+        saved_total = job.prospects_saved_total
+        if saved_total == 0 and job.prospects_found > saved_leads:
+            saved_with_website = max(
+                saved_with_website,
+                job.prospects_found - saved_leads - job.prospects_skipped_duplicates,
+            )
+            saved_total = saved_leads + saved_with_website
+
         return BulkScrapingStatusResponse(
             job_id=job.job_id,
             country=job.country,
@@ -197,7 +213,9 @@ class BulkScrapingService:
             total_queries=job.total_queries,
             completed_queries=job.completed_queries,
             prospects_found=job.prospects_found,
-            prospects_saved=job.prospects_saved,
+            prospects_saved=saved_leads,
+            prospects_saved_with_website=saved_with_website,
+            prospects_saved_total=saved_total,
             prospects_skipped_duplicates=job.prospects_skipped_duplicates,
             current_city=job.current_city,
             current_category=job.current_category,

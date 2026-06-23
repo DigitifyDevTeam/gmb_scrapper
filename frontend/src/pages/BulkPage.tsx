@@ -64,6 +64,13 @@ export function BulkPage() {
 
   const isActive = status?.status === 'running' || status?.status === 'paused'
   const isPaused = status?.status === 'paused'
+  const canResumeStopped =
+    status?.status === 'stopped' &&
+    status.completed_queries < status.total_queries
+
+  const savedTotal = status?.prospects_saved_total ?? 0
+  const savedLeads = status?.prospects_saved ?? 0
+  const savedWithWebsite = status?.prospects_saved_with_website ?? 0
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -72,6 +79,11 @@ export function BulkPage() {
       target_count: Number(targetCount),
     })
     setJobId(result.job_id)
+  }
+
+  const handleFinish = () => {
+    if (!status) return
+    stopBulk.mutate(status.job_id)
   }
 
   const progressPercent =
@@ -89,11 +101,8 @@ export function BulkPage() {
           jusqu&apos;à atteindre l&apos;objectif.
         </p>
         <p className={`mt-3 ${ui.cardMuted}`}>
-          Les prospects sans site web sont enregistrés avec toutes les infos GMB sur la page{' '}
-          <Link to="/prospects" className={ui.link}>
-            Prospects
-          </Link>
-          . Les entreprises avec site web ne sont gardées que par nom pour éviter les doublons.
+          Les entreprises <strong>sans site web</strong> sont enregistrées avec toutes les infos GMB. Celles{' '}
+          <strong>avec site web</strong> sont gardées avec nom + URL seulement (onglet Prospects → filtre « Avec site web »).
         </p>
       </div>
 
@@ -134,8 +143,10 @@ export function BulkPage() {
           <div className={`grid gap-2 text-sm sm:grid-cols-2 ${ui.body}`}>
             <p>Tâche : {status.job_id}</p>
             <p>Requêtes : {status.completed_queries} / {status.total_queries}</p>
-            <p>Enregistrés : {status.prospects_saved} / {status.target_count}</p>
-            <p>Trouvés (brut) : {status.prospects_found}</p>
+            <p>Leads sans site : {savedLeads} / {status.target_count}</p>
+            <p>Avec site (nom + URL) : {savedWithWebsite}</p>
+            <p>Total enregistré en base : {savedTotal}</p>
+            <p>Trouvés sur Maps (brut) : {status.prospects_found}</p>
             <p>Doublons ignorés : {status.prospects_skipped_duplicates}</p>
             {status.current_city && (
               <p>
@@ -143,6 +154,15 @@ export function BulkPage() {
               </p>
             )}
           </div>
+
+          {savedTotal > 0 && (
+            <p className={ui.cardMuted}>
+              <Link to="/prospects" className={ui.link}>
+                Voir les {savedTotal} prospects en base
+              </Link>
+              {' '}(filtre « Tous » pour tout afficher).
+            </p>
+          )}
 
           {isActive && (
             <div className="flex flex-wrap gap-3 pt-2">
@@ -167,16 +187,30 @@ export function BulkPage() {
                 variant="danger"
                 loading={stopBulk.isPending}
                 disabled={stopBulk.isPending}
-                onClick={() => stopBulk.mutate(status.job_id)}
+                onClick={handleFinish}
               >
-                Arrêter et enregistrer
+                Terminer et enregistrer
+              </Button>
+            </div>
+          )}
+
+          {canResumeStopped && (
+            <div className="flex flex-wrap gap-3 pt-2">
+              <Button
+                variant="primary"
+                loading={resumeBulk.isPending}
+                onClick={() => resumeBulk.mutate(status.job_id)}
+              >
+                Reprendre le scraping
               </Button>
             </div>
           )}
 
           {status.status === 'stopped' && (
             <p className={ui.success}>
-              Scraping arrêté. Toutes les données collectées sont enregistrées en base.
+              Scraping terminé. {savedTotal} entreprise{savedTotal > 1 ? 's' : ''} enregistrée
+              {savedTotal > 1 ? 's' : ''} en base ({savedLeads} sans site, {savedWithWebsite} avec site).
+              {canResumeStopped && ' Cliquez sur Reprendre pour continuer où vous vous êtes arrêté.'}
             </p>
           )}
 

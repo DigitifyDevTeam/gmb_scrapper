@@ -38,6 +38,8 @@ class BulkJobState:
     completed_queries: int = 0
     prospects_found: int = 0
     prospects_saved: int = 0
+    prospects_saved_with_website: int = 0
+    prospects_saved_total: int = 0
     prospects_skipped_duplicates: int = 0
     current_city: str | None = None
     current_category: str | None = None
@@ -116,24 +118,36 @@ class JobRunner:
             register_bulk_cancel(job_id)
             try:
                 await coro_factory()
-                if state.stop_requested or state.status == SearchStatus.STOPPED:
+                if state.stop_requested:
                     state.status = SearchStatus.STOPPED
                 elif state.status not in (SearchStatus.FAILED, SearchStatus.STOPPED, SearchStatus.PAUSED):
                     state.status = SearchStatus.COMPLETED
             except asyncio.CancelledError:
-                state.stop_requested = True
-                state.status = SearchStatus.STOPPED
+                if state.stop_requested:
+                    state.status = SearchStatus.STOPPED
+                else:
+                    # Server reload or process shutdown — keep RUNNING so startup can recover.
+                    state.status = SearchStatus.RUNNING
+                    state.finished_at = None
                 raise
             except Exception as exc:
                 logger.exception("Bulk job %s failed", job_id)
                 state.status = SearchStatus.FAILED
                 state.error = str(exc) or repr(exc)
             finally:
-                if state.finished_at is None:
-                    state.finished_at = datetime.now(timezone.utc)
+                if state.status in (
+                    SearchStatus.STOPPED,
+                    SearchStatus.COMPLETED,
+                    SearchStatus.FAILED,
+                ):
+                    if state.finished_at is None:
+                        state.finished_at = datetime.now(timezone.utc)
+                else:
+                    state.finished_at = None
                 state.pause_requested = False
-                state.current_city = None
-                state.current_category = None
+                if state.status != SearchStatus.RUNNING:
+                    state.current_city = None
+                    state.current_category = None
                 clear_bulk_cancel(job_id)
                 from app.services.bulk_job_persistence import schedule_sync_bulk_job
 
@@ -164,11 +178,22 @@ class JobRunner:
 
     def request_bulk_resume(self, job_id: str) -> BulkJobState:
         job = self._require_bulk_job(job_id)
-        if job.status not in _ACTIVE_BULK_STATUSES:
-            raise ValueError(f"Bulk job {job_id} is not active")
-        job.pause_requested = False
-        job.status = SearchStatus.RUNNING
-        return job
+        if job.status in _ACTIVE_BULK_STATUSES:
+            job.pause_requested = False
+            job.stop_requested = False
+            job.status = SearchStatus.RUNNING
+            job.finished_at = None
+            register_bulk_cancel(job_id)
+            return job
+        if job.status == SearchStatus.STOPPED and job.completed_queries < job.total_queries:
+            job.pause_requested = False
+            job.stop_requested = False
+            job.status = SearchStatus.RUNNING
+            job.finished_at = None
+            job.error = None
+            register_bulk_cancel(job_id)
+            return job
+        raise ValueError(f"Bulk job {job_id} is not active")
 
     def request_bulk_stop(self, job_id: str) -> BulkJobState:
         job = self._require_bulk_job(job_id)
@@ -183,8 +208,6 @@ class JobRunner:
         job.current_city = None
         job.current_category = None
         signal_bulk_cancel(job_id)
-        if job._task is not None and not job._task.done():
-            job._task.cancel()
         return job
 
     def update_progress(self, job_id: str, *, found: int | None = None, saved: int | None = None) -> None:
@@ -202,6 +225,8 @@ class JobRunner:
         *,
         found_delta: int = 0,
         saved_delta: int = 0,
+        saved_with_website_delta: int = 0,
+        saved_total_delta: int = 0,
         skipped_delta: int = 0,
         completed_queries: int | None = None,
         current_city: str | None = None,
@@ -213,6 +238,8 @@ class JobRunner:
             return
         job.prospects_found += found_delta
         job.prospects_saved += saved_delta
+        job.prospects_saved_with_website += saved_with_website_delta
+        job.prospects_saved_total += saved_total_delta
         job.prospects_skipped_duplicates += skipped_delta
         if completed_queries is not None:
             job.completed_queries = completed_queries

@@ -46,6 +46,8 @@ class BulkScrapingStatusResponse(BaseModel):
     completed_queries: int
     prospects_found: int
     prospects_saved: int
+    prospects_saved_with_website: int = 0
+    prospects_saved_total: int = 0
     prospects_skipped_duplicates: int
     current_city: str | None = None
     current_category: str | None = None

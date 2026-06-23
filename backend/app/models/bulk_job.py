@@ -17,6 +17,8 @@ class BulkJob(Base):
     completed_queries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     prospects_found: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     prospects_saved: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    prospects_saved_with_website: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    prospects_saved_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     prospects_skipped_duplicates: Mapped[int] = mapped_column(
         Integer,
         nullable=False,

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,8 +23,22 @@ class BulkJobRepository(BaseRepository[BulkJob]):
         return list(result.scalars().all())
 
     async def get_active(self) -> BulkJob | None:
+        await self.finalize_inconsistent_jobs()
         jobs = await self.list_by_status([SearchStatus.RUNNING, SearchStatus.PAUSED])
         return jobs[0] if jobs else None
+
+    async def finalize_inconsistent_jobs(self) -> None:
+        """Fix jobs left RUNNING with stop_requested after a crash or partial stop."""
+        jobs = await self.list_by_status([SearchStatus.RUNNING, SearchStatus.PAUSED])
+        changed = False
+        for job in jobs:
+            if job.stop_requested:
+                job.status = SearchStatus.STOPPED
+                if job.finished_at is None:
+                    job.finished_at = datetime.now(timezone.utc)
+                changed = True
+        if changed:
+            await self.session.flush()
 
     async def upsert_from_state(self, state: BulkJobState) -> BulkJob:
         existing = await self.get_by_job_id(state.job_id)
@@ -35,6 +51,8 @@ class BulkJobRepository(BaseRepository[BulkJob]):
                 completed_queries=state.completed_queries,
                 prospects_found=state.prospects_found,
                 prospects_saved=state.prospects_saved,
+                prospects_saved_with_website=state.prospects_saved_with_website,
+                prospects_saved_total=state.prospects_saved_total,
                 prospects_skipped_duplicates=state.prospects_skipped_duplicates,
                 current_city=state.current_city,
                 current_category=state.current_category,
@@ -51,6 +69,8 @@ class BulkJobRepository(BaseRepository[BulkJob]):
         existing.completed_queries = state.completed_queries
         existing.prospects_found = state.prospects_found
         existing.prospects_saved = state.prospects_saved
+        existing.prospects_saved_with_website = state.prospects_saved_with_website
+        existing.prospects_saved_total = state.prospects_saved_total
         existing.prospects_skipped_duplicates = state.prospects_skipped_duplicates
         existing.current_city = state.current_city
         existing.current_category = state.current_category

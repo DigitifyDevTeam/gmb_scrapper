@@ -54,7 +54,6 @@ async def execute_search_scrape(
 
     prospects_to_save: list[Prospect] = []
     skipped_duplicates = 0
-    saved_with_website_minimal = 0
     seen_dedupe_keys: set[str] = set()
     for business, detection in enriched:
         if bulk_job_id and is_bulk_cancel_requested(bulk_job_id):
@@ -91,8 +90,6 @@ async def execute_search_scrape(
             country=search.country,
             city=search.city,
         )
-        if detection.has_website:
-            saved_with_website_minimal += 1
         prospects_to_save.append(prospect)
 
     lead_maps_urls = [
@@ -107,28 +104,30 @@ async def execute_search_scrape(
                 prospect.testimonials = testimonials_by_url.get(prospect.maps_url) or None
 
     if prospects_to_save:
-        prospects_to_save = await prospect_repo.create_many_deduped(prospects_to_save)
+        prospects_to_save, db_skipped = await prospect_repo.create_many_deduped(prospects_to_save)
+        skipped_duplicates += db_skipped
 
     await search_repo.update_status(search_id, SearchStatus.COMPLETED)
     if progress_job_id is not None:
         job_runner.update_progress(progress_job_id, saved=len(prospects_to_save))
 
-    saved_leads = len(prospects_to_save) - saved_with_website_minimal
+    saved_leads = sum(1 for prospect in prospects_to_save if not prospect.has_website)
+    saved_with_website = len(prospects_to_save) - saved_leads
 
     logger.info(
-        "Search %s completed: found=%s saved=%s leads=%s dedupe_skipped=%s minimal_with_website=%s",
+        "Search %s completed: found=%s saved=%s leads=%s with_website=%s dedupe_skipped=%s",
         search_id,
         len(raw_businesses),
         len(prospects_to_save),
         saved_leads,
+        saved_with_website,
         skipped_duplicates,
-        saved_with_website_minimal,
     )
     return ScrapeRunResult(
         found=len(raw_businesses),
         saved=len(prospects_to_save),
         skipped_duplicates=skipped_duplicates,
-        skipped_has_website=saved_with_website_minimal,
+        saved_with_website=saved_with_website,
         saved_leads=saved_leads,
     )
 

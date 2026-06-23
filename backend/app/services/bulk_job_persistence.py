@@ -37,6 +37,8 @@ def bulk_job_to_state(job: BulkJob) -> BulkJobState:
         completed_queries=job.completed_queries,
         prospects_found=job.prospects_found,
         prospects_saved=job.prospects_saved,
+        prospects_saved_with_website=job.prospects_saved_with_website,
+        prospects_saved_total=job.prospects_saved_total,
         prospects_skipped_duplicates=job.prospects_skipped_duplicates,
         current_city=job.current_city,
         current_category=job.current_category,
@@ -54,6 +56,7 @@ async def recover_interrupted_bulk_jobs() -> None:
     async with AsyncSessionLocal() as session:
         bulk_repo = BulkJobRepository(session)
         search_repo = SearchRepository(session)
+        await bulk_repo.finalize_inconsistent_jobs()
         interrupted = await bulk_repo.list_by_status([SearchStatus.RUNNING, SearchStatus.PAUSED])
 
         for db_job in interrupted:
