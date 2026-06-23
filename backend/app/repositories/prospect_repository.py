@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from sqlalchemy import Select, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -8,7 +9,7 @@ from app.models.enums import WebsiteReason
 from app.models.prospect import Prospect
 from app.models.search import Search
 from app.repositories.base import BaseRepository
-from app.utils.url import normalize_maps_url
+from app.utils.prospect_identity import build_prospect_dedupe_key
 
 
 class ProspectRepository(BaseRepository[Prospect]):
@@ -101,57 +102,51 @@ class ProspectRepository(BaseRepository[Prospect]):
             "without_website": total - with_website,
         }
 
+    async def exists_by_dedupe_key(self, dedupe_key: str) -> bool:
+        result = await self.session.execute(
+            select(func.count()).select_from(Prospect).where(Prospect.dedupe_key == dedupe_key)
+        )
+        return int(result.scalar_one()) > 0
+
     async def exists_globally(
         self,
         *,
+        business_name: str,
+        address: str | None,
+        phone: str | None,
         maps_url: str | None,
-        business_name: str,
-        address: str | None,
+        country: str | None = None,
     ) -> bool:
-        normalized_url = normalize_maps_url(maps_url)
-        if normalized_url:
-            url_result = await self.session.execute(
+        dedupe_key, maps_place_id = build_prospect_dedupe_key(
+            business_name=business_name,
+            address=address,
+            phone=phone,
+            maps_url=maps_url,
+            country=country,
+        )
+        if await self.exists_by_dedupe_key(dedupe_key):
+            return True
+
+        if maps_place_id:
+            place_result = await self.session.execute(
                 select(func.count())
                 .select_from(Prospect)
-                .where(Prospect.maps_url == normalized_url)
+                .where(Prospect.maps_place_id == maps_place_id)
             )
-            if int(url_result.scalar_one()) > 0:
+            if int(place_result.scalar_one()) > 0:
                 return True
 
-        name_address_result = await self.session.execute(
-            select(func.count())
-            .select_from(Prospect)
-            .where(
-                Prospect.business_name == business_name,
-                Prospect.address == address,
-            )
-        )
-        return int(name_address_result.scalar_one()) > 0
+        return False
 
-    async def exists_for_search(
-        self,
-        search_id: int,
-        business_name: str,
-        address: str | None,
-        maps_url: str | None = None,
-    ) -> bool:
-        normalized_url = normalize_maps_url(maps_url)
-        if normalized_url:
-            url_result = await self.session.execute(
-                select(func.count())
-                .select_from(Prospect)
-                .where(
-                    Prospect.search_id == search_id,
-                    Prospect.maps_url == normalized_url,
-                )
-            )
-            if int(url_result.scalar_one()) > 0:
-                return True
-
-        stmt = select(func.count()).select_from(Prospect).where(
-            Prospect.search_id == search_id,
-            Prospect.business_name == business_name,
-            Prospect.address == address,
-        )
-        result = await self.session.execute(stmt)
-        return int(result.scalar_one()) > 0
+    async def create_many_deduped(self, entities: list[Prospect]) -> list[Prospect]:
+        saved: list[Prospect] = []
+        for entity in entities:
+            try:
+                async with self.session.begin_nested():
+                    self.session.add(entity)
+                    await self.session.flush()
+                    await self.session.refresh(entity)
+                    saved.append(entity)
+            except IntegrityError:
+                continue
+        return saved

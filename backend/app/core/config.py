@@ -33,13 +33,25 @@ class Settings(BaseSettings):
     scraper_headless: bool = True
     scraper_max_results: int = 120
     scraper_scroll_pause_ms: int = 1500
+    scraper_scroll_pause_jitter_ms: int = 800
     scraper_scroll_stable_rounds: int = 5
-    scraper_request_delay_ms: int = 500
+    scraper_request_delay_ms: int = 800
+    scraper_request_delay_jitter_ms: int = 600
+    scraper_page_settle_ms: int = 2000
+    scraper_page_settle_jitter_ms: int = 1200
+    scraper_place_details_settle_ms: int = 2000
+    scraper_website_extract_retries: int = 4
+    scraper_website_retry_delay_ms: int = 700
     scraper_max_testimonials_per_business: int = 10
     scraper_testimonial_scroll_rounds: int = 4
 
     bulk_target_default: int = 10_000
-    bulk_delay_between_searches_seconds: float = 3.0
+    bulk_delay_between_searches_seconds: float = 6.0
+    bulk_delay_jitter_seconds: float = 4.0
+    bulk_failure_cooldown_seconds: float = 30.0
+    bulk_failure_cooldown_max_seconds: float = 300.0
+    bulk_max_consecutive_failures: int = 3
+    bulk_blocked_cooldown_seconds: float = 600.0
     bulk_max_queries: int | None = None
 
     website_detection_timeout_seconds: int = 8

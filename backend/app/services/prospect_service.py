@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.prospect_repository import ProspectRepository
 from app.schemas.common import PaginatedResponse
 from app.schemas.prospect import ProspectFilters, ProspectRead, ProspectStats, TestimonialRead
+from app.utils.prospect_identity import build_google_maps_profile_url
 
 
 class ProspectService:
@@ -72,7 +73,15 @@ class ProspectService:
             website=prospect.website,
             rating=prospect.rating,
             review_count=prospect.review_count,
-            maps_url=prospect.maps_url,
+            maps_url=build_google_maps_profile_url(
+                business_name=prospect.business_name,
+                address=prospect.address,
+                city=prospect.search.city if prospect.search else None,
+                country=prospect.search.country if prospect.search else None,
+                maps_place_id=prospect.maps_place_id,
+                maps_url=prospect.maps_url,
+            )
+            or prospect.maps_url,
             has_website=prospect.has_website,
             website_reason=prospect.website_reason,
             testimonials=testimonials,

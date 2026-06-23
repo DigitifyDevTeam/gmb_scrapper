@@ -77,37 +77,85 @@ def test_empty_string_detection() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4xx / 5xx → under construction
+# Missing pages (404 / 410) → under construction
 # ---------------------------------------------------------------------------
 
-def test_http_404_is_under_construction() -> None:
+def test_http_404_is_valid_when_no_placeholder_confirmed() -> None:
+    """404 often means WAF, wrong homepage path, or bot filtering — not a dead site."""
     detector = WebsiteDetector()
     client = _mock_client(get={"return_value": _response(404, "Not Found")})
 
     result = _run_detect(detector, client)
 
-    assert result.has_website is False
-    assert result.reason == WebsiteReason.UNDER_CONSTRUCTION
+    assert result.has_website is True
+    assert result.reason == WebsiteReason.VALID
 
 
-def test_http_500_is_under_construction() -> None:
+def test_http_410_is_valid_when_no_placeholder_confirmed() -> None:
+    detector = WebsiteDetector()
+    client = _mock_client(get={"return_value": _response(410, "Gone")})
+
+    result = _run_detect(detector, client)
+
+    assert result.has_website is True
+    assert result.reason == WebsiteReason.VALID
+
+
+# ---------------------------------------------------------------------------
+# Bot protection / transient errors → VALID (false-positive prevention)
+# ---------------------------------------------------------------------------
+
+def test_http_403_is_valid() -> None:
+    """403 usually means a WAF/bot block on a real, working site."""
+    detector = WebsiteDetector()
+    client = _mock_client(get={"return_value": _response(403, "Forbidden")})
+
+    result = _run_detect(detector, client)
+
+    assert result.has_website is True
+    assert result.reason == WebsiteReason.VALID
+
+
+def test_http_401_is_valid() -> None:
+    detector = WebsiteDetector()
+    client = _mock_client(get={"return_value": _response(401, "Unauthorized")})
+
+    result = _run_detect(detector, client)
+
+    assert result.has_website is True
+    assert result.reason == WebsiteReason.VALID
+
+
+def test_http_429_is_valid() -> None:
+    detector = WebsiteDetector()
+    client = _mock_client(get={"return_value": _response(429, "Too Many Requests")})
+
+    result = _run_detect(detector, client)
+
+    assert result.has_website is True
+    assert result.reason == WebsiteReason.VALID
+
+
+def test_http_500_is_valid() -> None:
+    """Transient server errors should not condemn a site as under construction."""
     detector = WebsiteDetector()
     client = _mock_client(get={"return_value": _response(500, "Internal Server Error")})
 
     result = _run_detect(detector, client)
 
-    assert result.has_website is False
-    assert result.reason == WebsiteReason.UNDER_CONSTRUCTION
+    assert result.has_website is True
+    assert result.reason == WebsiteReason.VALID
 
 
-def test_http_503_is_under_construction() -> None:
+def test_http_503_is_valid() -> None:
+    """503 is the classic Cloudflare 'checking your browser' response."""
     detector = WebsiteDetector()
     client = _mock_client(get={"return_value": _response(503, "Service Unavailable")})
 
     result = _run_detect(detector, client)
 
-    assert result.has_website is False
-    assert result.reason == WebsiteReason.UNDER_CONSTRUCTION
+    assert result.has_website is True
+    assert result.reason == WebsiteReason.VALID
 
 
 # ---------------------------------------------------------------------------
@@ -190,12 +238,45 @@ def test_full_site_mentioning_en_construction_is_valid() -> None:
     assert result.reason == WebsiteReason.VALID
 
 
+def test_short_real_site_with_maintenance_mention_is_valid() -> None:
+    """Short real pages must not be flagged just because they mention maintenance."""
+    detector = WebsiteDetector()
+    html = (
+        "<html><head><title>Plombier Dupont - Lyon</title></head>"
+        "<body><h1>Plombier Dupont</h1>"
+        "<p>Intervention 7j/7. Nous assurons la maintenance de vos chaudières.</p>"
+        "<p>06 12 34 56 78</p></body></html>"
+    )
+    client = _mock_client(get={"return_value": _response(200, html)})
+
+    result = _run_detect(detector, client)
+
+    assert result.has_website is True
+    assert result.reason == WebsiteReason.VALID
+
+
+def test_homepage_404_but_original_path_works_is_valid() -> None:
+    detector = WebsiteDetector()
+    ok = _response(200, "<html><body><h1>Restaurant</h1><p>" + "x" * 400 + "</p></body></html>")
+    not_found = _response(404, "Not Found")
+
+    client = _mock_client(get={"side_effect": [not_found, ok]})
+
+    with patch("app.scraper.website_detector.httpx.AsyncClient", return_value=client):
+        result = asyncio.run(detector.detect("https://restaurant.fr/menu"))
+
+    assert result.has_website is True
+    assert result.reason == WebsiteReason.VALID
+    assert client.get.call_args_list[0][0][0] == "https://restaurant.fr/menu"
+    assert client.get.call_args_list[1][0][0] == "https://restaurant.fr/"
+
+
 # ---------------------------------------------------------------------------
 # Homepage is always checked, not the internal page
 # ---------------------------------------------------------------------------
 
-def test_internal_url_checks_homepage_not_internal_page() -> None:
-    """Even when GMB gives us /menu, we check /."""
+def test_internal_url_checks_original_url_before_homepage() -> None:
+    """The exact GMB URL is checked first; homepage is only a fallback."""
     detector = WebsiteDetector()
     ok = _response(200, "<html><body>" + "x" * 2000 + "</body></html>")
     client = _mock_client(get={"return_value": ok})
@@ -203,9 +284,8 @@ def test_internal_url_checks_homepage_not_internal_page() -> None:
     with patch("app.scraper.website_detector.httpx.AsyncClient", return_value=client):
         asyncio.run(detector.detect("https://restaurant.fr/menu/carte"))
 
-    # The GET should have been called with the homepage, not /menu/carte
     actual_url = client.get.call_args[0][0]
-    assert actual_url == "https://restaurant.fr/"
+    assert actual_url == "https://restaurant.fr/menu/carte"
 
 
 # ---------------------------------------------------------------------------

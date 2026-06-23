@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.models.enums import SearchStatus
+from app.workers.bulk_cancel import clear_bulk_cancel, register_bulk_cancel, signal_bulk_cancel
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ class JobRunner:
             status=SearchStatus.RUNNING,
         )
         self._bulk_jobs[resolved_job_id] = state
+        register_bulk_cancel(resolved_job_id)
         self.start_bulk_job_task(state, coro_factory)
         return state
 
@@ -111,19 +113,28 @@ class JobRunner:
         job_id = state.job_id
 
         async def wrapped() -> None:
+            register_bulk_cancel(job_id)
             try:
                 await coro_factory()
-                if state.stop_requested:
+                if state.stop_requested or state.status == SearchStatus.STOPPED:
                     state.status = SearchStatus.STOPPED
                 elif state.status not in (SearchStatus.FAILED, SearchStatus.STOPPED, SearchStatus.PAUSED):
                     state.status = SearchStatus.COMPLETED
+            except asyncio.CancelledError:
+                state.stop_requested = True
+                state.status = SearchStatus.STOPPED
+                raise
             except Exception as exc:
                 logger.exception("Bulk job %s failed", job_id)
                 state.status = SearchStatus.FAILED
                 state.error = str(exc) or repr(exc)
             finally:
-                state.finished_at = datetime.now(timezone.utc)
+                if state.finished_at is None:
+                    state.finished_at = datetime.now(timezone.utc)
                 state.pause_requested = False
+                state.current_city = None
+                state.current_category = None
+                clear_bulk_cancel(job_id)
                 from app.services.bulk_job_persistence import schedule_sync_bulk_job
 
                 schedule_sync_bulk_job(state)
@@ -161,10 +172,19 @@ class JobRunner:
 
     def request_bulk_stop(self, job_id: str) -> BulkJobState:
         job = self._require_bulk_job(job_id)
+        if job.status == SearchStatus.STOPPED:
+            return job
         if job.status not in _ACTIVE_BULK_STATUSES:
             raise ValueError(f"Bulk job {job_id} is not active")
         job.stop_requested = True
         job.pause_requested = False
+        job.status = SearchStatus.STOPPED
+        job.finished_at = datetime.now(timezone.utc)
+        job.current_city = None
+        job.current_category = None
+        signal_bulk_cancel(job_id)
+        if job._task is not None and not job._task.done():
+            job._task.cancel()
         return job
 
     def update_progress(self, job_id: str, *, found: int | None = None, saved: int | None = None) -> None:

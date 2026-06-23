@@ -158,7 +158,7 @@ class BulkScrapingService:
             state = self.runner.request_bulk_stop(job_id)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        await self.bulk_job_repo.sync_control_flags(job_id, state)
+        await self.bulk_job_repo.upsert_from_state(state)
         await self.session.commit()
         schedule_sync_bulk_job(state)
         return self._to_status_response(state)

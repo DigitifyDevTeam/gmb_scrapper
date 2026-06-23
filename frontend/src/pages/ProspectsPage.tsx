@@ -32,6 +32,41 @@ function formatLocation(prospect: Prospect): string {
 }
 
 function ProspectCard({ prospect }: { prospect: Prospect }) {
+  if (prospect.has_website) {
+    return (
+      <article className={`space-y-4 p-5 ${ui.card}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1 min-w-0">
+            <h3 className="text-lg font-semibold text-slate-900 break-words dark:text-white">
+              {prospect.business_name}
+            </h3>
+            <p className={ui.cardMuted}>À vérifier manuellement</p>
+          </div>
+          <Badge variant="success">Avec site web</Badge>
+        </div>
+
+        <dl className="text-sm">
+          <div>
+            <dt className="text-slate-500">Site web</dt>
+            <dd className="mt-0.5 break-all text-slate-800 dark:text-slate-200">
+              {prospect.website ? (
+                <a href={prospect.website} target="_blank" rel="noreferrer" className={ui.link}>
+                  {prospect.website}
+                </a>
+              ) : (
+                '—'
+              )}
+            </dd>
+          </div>
+        </dl>
+
+        <p className="text-xs text-slate-500">
+          Scrapé le {new Date(prospect.created_at).toLocaleString('fr-FR')}
+        </p>
+      </article>
+    )
+  }
+
   return (
     <article className={`space-y-4 p-5 ${ui.card}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -162,8 +197,8 @@ export function ProspectsPage() {
       <div>
         <h2 className={ui.pageTitle}>Prospects</h2>
         <p className={ui.pageSubtitle}>
-          Prospects sans site web — fiches GMB complètes pour la prospection. Les entreprises avec site web
-          ne sont conservées que par nom pour éviter les doublons.
+          Prospects sans site web — fiches GMB complètes pour la prospection. Les entreprises avec
+          site web sont conservées avec leur nom et URL pour vérification manuelle.
         </p>
       </div>
 

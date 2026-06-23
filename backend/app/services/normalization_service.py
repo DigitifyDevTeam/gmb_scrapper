@@ -4,7 +4,8 @@ from decimal import Decimal
 from app.scraper.business_parser import RawBusiness
 from app.utils.address import normalize_address
 from app.utils.phone import normalize_phone
-from app.utils.url import normalize_maps_url
+from app.utils.prospect_identity import build_prospect_dedupe_key
+from app.utils.url import normalize_maps_url, parse_website_href
 
 
 @dataclass
@@ -35,7 +36,14 @@ class NormalizationService:
 
             address = normalize_address(business.address)
             phone = normalize_phone(business.phone, country)
-            key = self._dedupe_key(name, address, business.maps_url)
+            maps_url = normalize_maps_url(business.maps_url)
+            key, _ = build_prospect_dedupe_key(
+                business_name=name,
+                address=address,
+                phone=phone,
+                maps_url=maps_url,
+                country=country,
+            )
             if key in seen_keys:
                 continue
             seen_keys.add(key)
@@ -46,17 +54,11 @@ class NormalizationService:
                     category=(business.category or "").strip() or None,
                     address=address,
                     phone=phone,
-                    website=(business.website or "").strip() or None,
+                    website=parse_website_href(business.website),
                     rating=business.rating,
                     review_count=business.review_count,
-                    maps_url=normalize_maps_url(business.maps_url),
+                    maps_url=maps_url,
                 )
             )
 
         return normalized
-
-    def _dedupe_key(self, name: str, address: str | None, maps_url: str | None) -> str:
-        normalized_url = normalize_maps_url(maps_url)
-        if normalized_url:
-            return f"url:{normalized_url.lower()}"
-        return f"name:{name.lower()}|addr:{(address or '').lower()}"

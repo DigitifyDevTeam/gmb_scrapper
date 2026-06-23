@@ -166,6 +166,7 @@ export function BulkPage() {
               <Button
                 variant="danger"
                 loading={stopBulk.isPending}
+                disabled={stopBulk.isPending}
                 onClick={() => stopBulk.mutate(status.job_id)}
               >
                 Arrêter et enregistrer

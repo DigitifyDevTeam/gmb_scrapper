@@ -1,15 +1,35 @@
 import asyncio
 import logging
-import random
 
 from playwright.async_api import Locator, Page
 
 from app.core.config import get_settings
 from app.scraper.business_parser import BusinessParser, RawBusiness
+from app.scraper.exceptions import BulkJobCancelledError
+from app.scraper.maps_ui import FEED_PLACE_CARD_SELECTOR, count_place_cards, is_single_place_url
+from app.scraper.rate_limit import scraper_action_delay
+from app.workers.bulk_cancel import is_bulk_cancel_requested
 from app.scraper.testimonial import Testimonial, parse_rating_from_aria
 from app.utils.phone import extract_phone_from_data_item_id
+from app.utils.prospect_identity import pick_best_maps_source_url
+from app.utils.url import parse_website_href
 
 logger = logging.getLogger(__name__)
+
+PLACE_PANEL_SELECTOR = 'div[role="main"]'
+WEBSITE_LINK_SELECTORS = (
+    'a[data-item-id="authority"]',
+    'button[data-item-id="authority"]',
+    'a[data-item-id^="authority:"]',
+    'button[data-item-id^="authority:"]',
+    'a[aria-label*="site web" i]',
+    'a[aria-label*="website" i]',
+    'button[aria-label*="site web" i]',
+    'button[aria-label*="website" i]',
+    'a[data-tooltip*="site web" i]',
+    'a[data-tooltip*="website" i]',
+    'a[href*="/url?q="]',
+)
 
 
 class ExtractionEngine:
@@ -17,13 +37,34 @@ class ExtractionEngine:
         self.settings = get_settings()
         self.parser = BusinessParser()
 
-    async def extract_businesses(self, page: Page, max_results: int) -> list[RawBusiness]:
-        card_locator = page.locator('div[role="feed"] a[href*="/maps/place"]')
-        count = min(await card_locator.count(), max_results)
+    async def extract_businesses(
+        self,
+        page: Page,
+        max_results: int,
+        *,
+        bulk_job_id: str | None = None,
+    ) -> list[RawBusiness]:
+        card_locator = page.locator(FEED_PLACE_CARD_SELECTOR)
+        card_count = await card_locator.count()
+        total_count = min(await count_place_cards(page), max_results)
+
+        if total_count == 0:
+            return []
+
         businesses: list[RawBusiness] = []
         seen_keys: set[str] = set()
 
+        # Google sometimes lands directly on a single place page (no results feed).
+        if card_count == 0 and is_single_place_url(page.url):
+            business = await self._extract_single_place_page(page)
+            if business is not None:
+                businesses.append(business)
+            return businesses
+
+        count = min(card_count, max_results)
         for index in range(count):
+            if bulk_job_id and is_bulk_cancel_requested(bulk_job_id):
+                raise BulkJobCancelledError(bulk_job_id)
             try:
                 card = card_locator.nth(index)
                 business = await self._extract_card(page, card)
@@ -37,18 +78,34 @@ class ExtractionEngine:
             except Exception as exc:
                 logger.warning("Failed to extract card %s: %s", index, exc)
 
-            await asyncio.sleep(
-                (self.settings.scraper_request_delay_ms + random.randint(0, 300)) / 1000
-            )
+            await scraper_action_delay(self.settings)
 
         return businesses
 
+    async def _extract_single_place_page(self, page: Page) -> RawBusiness | None:
+        await self._wait_for_place_details(page)
+        return self.parser.parse_listing_card(
+            {
+                "business_name": await self._first_text(page, ["h1.DUwDvf", "h1"]),
+                "category": await self._first_text(
+                    page,
+                    ["button.DkEaL", 'button[jsaction*="category"]'],
+                ),
+                "address": await self._button_text(page, "address"),
+                "phone": await self._phone_from_page(page),
+                "website": await self._website_from_page(page),
+                "rating": await self._rating_from_page(page),
+                "review_count": await self._review_count_from_page(page),
+                "maps_url": page.url,
+            }
+        )
+
     async def _extract_card(self, page: Page, card: Locator) -> RawBusiness | None:
+        card_href = await card.get_attribute("href")
         await card.scroll_into_view_if_needed()
         await card.click()
         await self._wait_for_place_details(page)
 
-        maps_url = page.url if "/maps/place" in page.url else None
         name = await self._first_text(
             page,
             [
@@ -69,6 +126,7 @@ class ExtractionEngine:
         website = await self._website_from_page(page)
         rating_text = await self._rating_from_page(page)
         review_text = await self._review_count_from_page(page)
+        maps_url = pick_best_maps_source_url(card_href, page.url)
 
         if not name:
             name = await card.inner_text()
@@ -100,19 +158,47 @@ class ExtractionEngine:
         return None
 
     async def _wait_for_place_details(self, page: Page) -> None:
+        try:
+            await page.wait_for_selector("h1.DUwDvf, h1", timeout=6000)
+        except Exception:
+            pass
+
         detail_selectors = (
-            'h1.DUwDvf',
             'button[data-item-id="address"]',
+            'a[data-item-id="address"]',
             'button[data-item-id^="phone:tel:"]',
+            'a[data-item-id^="phone:tel:"]',
             'button[data-item-id="phone"]',
+            'a[data-item-id="authority"]',
+            'button[data-item-id="authority"]',
         )
         for selector in detail_selectors:
             try:
-                await page.wait_for_selector(selector, timeout=2500)
-                return
+                await page.wait_for_selector(selector, timeout=3000)
+                break
             except Exception:
                 continue
-        await page.wait_for_timeout(1200)
+
+        await page.wait_for_timeout(self.settings.scraper_place_details_settle_ms)
+        await self._scroll_place_details_panel(page)
+
+    async def _scroll_place_details_panel(self, page: Page) -> None:
+        panels = page.locator(f"{PLACE_PANEL_SELECTOR} div.m6QErb.DxyBCb")
+        if await panels.count() == 0:
+            panels = page.locator(f"{PLACE_PANEL_SELECTOR} div.m6QErb")
+        if await panels.count() == 0:
+            return
+
+        panel = panels.first
+        try:
+            await panel.evaluate(
+                "(el) => { el.scrollTop = Math.min(el.scrollHeight, 900); }"
+            )
+            await page.wait_for_timeout(400)
+            await panel.evaluate("(el) => { el.scrollTop = 0; }")
+            await page.wait_for_timeout(300)
+        except Exception:
+            return
 
     async def _button_text(self, page: Page, data_item_id: str) -> str | None:
         locator = page.locator(f'button[data-item-id="{data_item_id}"]')
@@ -247,18 +333,81 @@ class ExtractionEngine:
         return value
 
     async def _website_from_page(self, page: Page) -> str | None:
-        website_button = page.locator('a[data-item-id="authority"]')
-        if await website_button.count() > 0:
-            href = await website_button.first.get_attribute("href")
-            if href:
-                return href.strip()
+        retries = self.settings.scraper_website_extract_retries
+        for attempt in range(retries):
+            website = await self._try_extract_website(page)
+            if website:
+                return website
 
-        links = page.locator('a[href^="http"]')
+            if attempt < retries - 1:
+                await self._scroll_place_details_panel(page)
+                await page.wait_for_timeout(self.settings.scraper_website_retry_delay_ms)
+
+        return None
+
+    async def _try_extract_website(self, page: Page) -> str | None:
+        panel = page.locator(PLACE_PANEL_SELECTOR)
+
+        for selector in WEBSITE_LINK_SELECTORS:
+            locator = panel.locator(selector)
+            count = await locator.count()
+            for index in range(count):
+                element = locator.nth(index)
+                website = await self._website_from_element(element)
+                if website:
+                    return website
+
+        links = panel.locator('a[href^="http"], a[href^="//"]')
         count = await links.count()
-        for idx in range(count):
-            href = await links.nth(idx).get_attribute("href")
-            if href and "google.com" not in href and "goo.gl" not in href:
-                return href.strip()
+        for index in range(count):
+            website = await self._website_from_element(links.nth(index))
+            if website:
+                return website
+
+        return None
+
+    async def _website_from_element(self, element: Locator) -> str | None:
+        for attribute in ("href", "data-href", "data-url"):
+            value = await element.get_attribute(attribute)
+            website = parse_website_href(value)
+            if website:
+                return website
+
+        aria = await element.get_attribute("aria-label")
+        if aria:
+            website = self._website_from_label(aria)
+            if website:
+                return website
+
+        text = (await element.inner_text()).strip()
+        if text:
+            return self._website_from_label(text)
+
+        return None
+
+    def _website_from_label(self, value: str) -> str | None:
+        lowered = value.lower()
+        prefixes = (
+            "site web:",
+            "website:",
+            "site internet:",
+            "url:",
+            "http://",
+            "https://",
+        )
+        for prefix in prefixes:
+            if lowered.startswith(prefix):
+                candidate = value[len(prefix) :].strip()
+                return parse_website_href(candidate)
+
+        if "http://" in value or "https://" in value:
+            for token in value.split():
+                website = parse_website_href(token.strip(".,;"))
+                if website:
+                    return website
+
+        if "." in value and " " not in value and not value.startswith("+"):
+            return parse_website_href(value)
 
         return None
 

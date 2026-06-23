@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from app.database.session import AsyncSessionLocal
 from app.models.bulk_job import BulkJob
@@ -56,6 +57,17 @@ async def recover_interrupted_bulk_jobs() -> None:
         interrupted = await bulk_repo.list_by_status([SearchStatus.RUNNING, SearchStatus.PAUSED])
 
         for db_job in interrupted:
+            if db_job.stop_requested:
+                logger.warning(
+                    "Marking bulk job %s as stopped (stop was requested before shutdown)",
+                    db_job.job_id,
+                )
+                db_job.status = SearchStatus.STOPPED
+                db_job.pause_requested = False
+                if db_job.finished_at is None:
+                    db_job.finished_at = datetime.now(timezone.utc)
+                continue
+
             logger.warning(
                 "Recovering interrupted bulk job %s (completed_queries=%s, status=%s)",
                 db_job.job_id,

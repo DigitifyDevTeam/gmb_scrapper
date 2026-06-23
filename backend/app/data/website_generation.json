@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "description": "LeadForge AI — configuration for generated prospect demo websites",
+
+  "stack": {
+    "framework": "react",
+    "bundler": "vite",
+    "language": "typescript",
+    "styling": "tailwindcss",
+    "output_type": "vite_project",
+    "build_command": "npm run build",
+    "preview_command": "npm run preview",
+    "deploy_artifact": "dist",
+    "notes": "Each generated site is a standalone Vite + React + TypeScript + Tailwind CSS project. Do not generate plain HTML or Jinja2 templates."
+  },
+
+  "dependencies": {
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "@vitejs/plugin-react": "^6.0.1",
+    "@tailwindcss/vite": "^4.3.0",
+    "tailwindcss": "^4.3.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.12"
+  },
+
+  "project_structure": {
+    "root_files": [
+      "index.html",
+      "package.json",
+      "tsconfig.json",
+      "tsconfig.app.json",
+      "vite.config.ts"
+    ],
+    "src_files": [
+      "src/main.tsx",
+      "src/App.tsx",
+      "src/index.css",
+      "src/site-data.json",
+      "src/types/site-data.ts",
+      "src/components/Hero.tsx",
+      "src/components/Services.tsx",
+      "src/components/Reviews.tsx",
+      "src/components/Contact.tsx",
+      "src/components/Footer.tsx"
+    ],
+    "data_file": "src/site-data.json",
+    "entry": "src/main.tsx"
+  },
+
+  "vite_config": {
+    "plugins": ["@vitejs/plugin-react", "@tailwindcss/vite"],
+    "css_entry": "@import \"tailwindcss\";",
+    "base_path": "./"
+  },
+
+  "generation_pipeline": {
+    "steps": [
+      "load_prospect_from_mysql",
+      "llm_generate_copy_json",
+      "merge_prospect_and_copy_into_site_data_json",
+      "scaffold_vite_react_typescript_tailwind_project",
+      "write_site_data_json_to_src",
+      "npm_install_and_build",
+      "deploy_dist_to_vercel_optional"
+    ],
+    "target_prospects": {
+      "has_website": false,
+      "required_fields": ["business_name"]
+    }
+  },
+
+  "prospect_field_mapping": {
+    "business_name": "business.name",
+    "category": "business.category",
+    "address": "contact.address",
+    "phone": "contact.phone",
+    "website": "contact.website",
+    "rating": "trust.rating",
+    "review_count": "trust.review_count",
+    "maps_url": "contact.maps_url",
+    "city": "location.city",
+    "country": "location.country",
+    "website_reason": "meta.website_reason",
+    "testimonials": "reviews.items"
+  },
+
+  "llm_copy_schema": {
+    "type": "object",
+    "required": ["hero_title", "hero_subtitle", "services", "about_paragraph", "cta_text", "meta_description"],
+    "properties": {
+      "hero_title": {
+        "type": "string",
+        "description": "Main headline for the hero section"
+      },
+      "hero_subtitle": {
+        "type": "string",
+        "description": "Supporting line under the headline"
+      },
+      "services": {
+        "type": "array",
+        "minItems": 3,
+        "maxItems": 6,
+        "items": { "type": "string" },
+        "description": "Service bullets inferred from category and city"
+      },
+      "about_paragraph": {
+        "type": "string",
+        "description": "Short about section, professional local tone in French"
+      },
+      "cta_text": {
+        "type": "string",
+        "description": "Primary call-to-action label, e.g. Appelez maintenant"
+      },
+      "meta_description": {
+        "type": "string",
+        "maxLength": 160,
+        "description": "SEO meta description for index.html"
+      }
+    },
+    "additionalProperties": false
+  },
+
+  "site_data_schema": {
+    "type": "object",
+    "description": "Written to src/site-data.json and imported by the generated React app",
+    "required": ["stack", "business", "location", "contact", "trust", "copy", "reviews", "meta"],
+    "properties": {
+      "stack": {
+        "type": "object",
+        "const": {
+          "framework": "react",
+          "bundler": "vite",
+          "language": "typescript",
+          "styling": "tailwindcss"
+        }
+      },
+      "business": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "category": { "type": ["string", "null"] }
+        }
+      },
+      "location": {
+        "type": "object",
+        "properties": {
+          "city": { "type": ["string", "null"] },
+          "country": { "type": ["string", "null"] }
+        }
+      },
+      "contact": {
+        "type": "object",
+        "properties": {
+          "address": { "type": ["string", "null"] },
+          "phone": { "type": ["string", "null"] },
+          "website": { "type": ["string", "null"] },
+          "maps_url": { "type": ["string", "null"] }
+        }
+      },
+      "trust": {
+        "type": "object",
+        "properties": {
+          "rating": { "type": ["number", "null"] },
+          "review_count": { "type": ["integer", "null"] }
+        }
+      },
+      "copy": {
+        "$ref": "#/llm_copy_schema"
+      },
+      "reviews": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["text"],
+              "properties": {
+                "author": { "type": ["string", "null"] },
+                "rating": { "type": ["number", "null"] },
+                "text": { "type": "string" },
+                "date": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      },
+      "meta": {
+        "type": "object",
+        "properties": {
+          "prospect_id": { "type": "integer" },
+          "website_reason": { "type": "string" },
+          "generated_at": { "type": "string", "format": "date-time" },
+          "locale": { "type": "string", "default": "fr-FR" }
+        }
+      }
+    }
+  },
+
+  "site_data_example": {
+    "stack": {
+      "framework": "react",
+      "bundler": "vite",
+      "language": "typescript",
+      "styling": "tailwindcss"
+    },
+    "business": {
+      "name": "Plombier Dupont",
+      "category": "Plombier"
+    },
+    "location": {
+      "city": "Paris",
+      "country": "France"
+    },
+    "contact": {
+      "address": "12 rue de la Paix, 75002 Paris",
+      "phone": "+33123456789",
+      "website": null,
+      "maps_url": "https://maps.google.com/..."
+    },
+    "trust": {
+      "rating": 4.7,
+      "review_count": 89
+    },
+    "copy": {
+      "hero_title": "Plombier Dupont — intervention rapide à Paris",
+      "hero_subtitle": "Dépannage, installation et rénovation sanitaire",
+      "services": [
+        "Dépannage urgence 24h/24",
+        "Installation sanitaire",
+        "Rénovation salle de bain",
+        "Détection de fuites"
+      ],
+      "about_paragraph": "Plombier Dupont accompagne les particuliers et professionnels à Paris depuis plusieurs années. Intervention rapide, devis transparent et travail soigné.",
+      "cta_text": "Appelez maintenant",
+      "meta_description": "Plombier à Paris — 4,7★ sur Google. Dépannage et installation. Appelez Plombier Dupont."
+    },
+    "reviews": {
+      "items": [
+        {
+          "author": "Marie L.",
+          "rating": 5,
+          "text": "Intervention rapide et efficace, je recommande.",
+          "date": "il y a 2 mois"
+        }
+      ]
+    },
+    "meta": {
+      "prospect_id": 42,
+      "website_reason": "no_url",
+      "generated_at": "2026-06-22T10:00:00Z",
+      "locale": "fr-FR"
+    }
+  }
+}

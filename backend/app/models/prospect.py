@@ -50,6 +50,8 @@ class Prospect(Base):
     rating: Mapped[Decimal | None] = mapped_column(Numeric(2, 1), nullable=True)
     review_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     maps_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    maps_place_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    dedupe_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
     has_website: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     website_reason: Mapped[WebsiteReason] = mapped_column(
         Enum(

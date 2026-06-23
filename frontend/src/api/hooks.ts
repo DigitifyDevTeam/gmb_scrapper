@@ -101,6 +101,10 @@ export function useStopBulkScraping() {
     mutationFn: (jobId: string) => scrapingApi.bulkStop(jobId),
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.bulkScrapingStatus(data.job_id), data)
+      if (data.status === 'stopped') {
+        queryClient.setQueryData(queryKeys.bulkScrapingActive, null)
+      }
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bulkScrapingActive })
     },
   })
 }

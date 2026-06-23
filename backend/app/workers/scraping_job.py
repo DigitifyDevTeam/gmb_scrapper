@@ -8,10 +8,13 @@ from app.models.prospect import Prospect
 from app.models.search import Search
 from app.repositories.prospect_repository import ProspectRepository
 from app.repositories.search_repository import SearchRepository
+from app.scraper.exceptions import BulkJobCancelledError
 from app.scraper.maps_scraper import MapsScraper
 from app.services.normalization_service import NormalizationService
 from app.services.prospect_record_service import build_prospect_from_scrape
 from app.services.website_detection_service import WebsiteDetectionService
+from app.utils.prospect_identity import build_prospect_dedupe_key
+from app.workers.bulk_cancel import is_bulk_cancel_requested
 from app.workers.job_runner import job_runner
 from app.workers.scrape_result import ScrapeRunResult
 
@@ -22,8 +25,8 @@ async def execute_search_scrape(
     session: AsyncSession,
     search_id: int,
     *,
-    use_global_dedupe: bool = False,
     progress_job_id: str | None = None,
+    bulk_job_id: str | None = None,
 ) -> ScrapeRunResult:
     scraper = MapsScraper()
     normalization_service = NormalizationService()
@@ -39,7 +42,10 @@ async def execute_search_scrape(
         category=search.category,
         city=search.city,
         country=search.country,
+        bulk_job_id=bulk_job_id,
     )
+    if bulk_job_id and is_bulk_cancel_requested(bulk_job_id):
+        raise BulkJobCancelledError(bulk_job_id)
     if progress_job_id is not None:
         job_runner.update_progress(progress_job_id, found=len(raw_businesses))
 
@@ -49,28 +55,41 @@ async def execute_search_scrape(
     prospects_to_save: list[Prospect] = []
     skipped_duplicates = 0
     saved_with_website_minimal = 0
+    seen_dedupe_keys: set[str] = set()
     for business, detection in enriched:
-        if use_global_dedupe:
-            exists = await prospect_repo.exists_globally(
-                maps_url=business.maps_url,
-                business_name=business.business_name,
-                address=business.address,
-            )
-        else:
-            exists = await prospect_repo.exists_for_search(
-                search_id=search_id,
-                business_name=business.business_name,
-                address=business.address,
-                maps_url=business.maps_url,
-            )
+        if bulk_job_id and is_bulk_cancel_requested(bulk_job_id):
+            raise BulkJobCancelledError(bulk_job_id)
+        dedupe_key, _ = build_prospect_dedupe_key(
+            business_name=business.business_name,
+            address=business.address,
+            phone=business.phone,
+            maps_url=business.maps_url,
+            country=search.country,
+        )
+
+        if dedupe_key in seen_dedupe_keys:
+            skipped_duplicates += 1
+            continue
+
+        exists = await prospect_repo.exists_globally(
+            business_name=business.business_name,
+            address=business.address,
+            phone=business.phone,
+            maps_url=business.maps_url,
+            country=search.country,
+        )
         if exists:
             skipped_duplicates += 1
             continue
+
+        seen_dedupe_keys.add(dedupe_key)
 
         prospect = build_prospect_from_scrape(
             search_id=search_id,
             business=business,
             detection=detection,
+            country=search.country,
+            city=search.city,
         )
         if detection.has_website:
             saved_with_website_minimal += 1
@@ -88,7 +107,7 @@ async def execute_search_scrape(
                 prospect.testimonials = testimonials_by_url.get(prospect.maps_url) or None
 
     if prospects_to_save:
-        await prospect_repo.create_many(prospects_to_save)
+        prospects_to_save = await prospect_repo.create_many_deduped(prospects_to_save)
 
     await search_repo.update_status(search_id, SearchStatus.COMPLETED)
     if progress_job_id is not None:

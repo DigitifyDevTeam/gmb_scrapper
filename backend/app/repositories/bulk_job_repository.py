@@ -94,4 +94,7 @@ class BulkJobRepository(BaseRepository[BulkJob]):
         existing.pause_requested = state.pause_requested
         existing.stop_requested = state.stop_requested
         existing.status = state.status
+        existing.finished_at = state.finished_at
+        existing.current_city = state.current_city
+        existing.current_category = state.current_category
         await self.session.flush()
